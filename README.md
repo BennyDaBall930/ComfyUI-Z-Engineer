@@ -13,7 +13,7 @@ A custom node for ComfyUI that integrates a local LLM (via OpenAI-compatible API
 1.  Clone this repository into your ComfyUI `custom_nodes` directory:
     ```bash
     cd ComfyUI/custom_nodes
-    git clone https://github.com/BennyDaBall/ComfyUI-Z-Engineer.git
+    git clone https://github.com/BennyDaBall930/ComfyUI-Z-Engineer.git
     ```
 2.  Restart ComfyUI.
 
