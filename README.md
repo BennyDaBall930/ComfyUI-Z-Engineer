@@ -78,6 +78,14 @@ Download any quant from [BennyDaBall/Z-Image-Engineer-V6-GGUF](https://huggingfa
 - `enforce_seed_terms`: `true` — deterministically re-appends seed phrases (counts, colors, quoted text) if the model drops them
 - `strip_reasoning` / `sanitize_output`: `true`
 
+### Trigger words / keep terms
+
+Put LoRA trigger words (or any phrase that must survive verbatim) into the optional `keep_terms` input, separated by commas: `m4rty style, neon glow`. The model is instructed to weave them in unchanged, and any it still drops are deterministically re-appended to the final prompt — exact casing preserved. Available on both the Local and API enhancer nodes.
+
+### Resizable text boxes
+
+Each multiline box on the enhancer nodes (seed prompt, system prompt, previews) can be resized vertically on its own with the grip in its bottom-right corner — no need to grow the whole node. Box heights are saved with the workflow; double-click the grip corner to reset a box to automatic sizing.
+
 ### Batch mode
 
 Enable `batch_mode` to process several seed prompts in one call (split by `batch_separator`, default `\n---\n`, falling back to lines). Outputs are joined with the same separator and each one is shown in the preview.

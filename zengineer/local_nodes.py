@@ -25,6 +25,8 @@ from .prompt_utils import (
     build_chat_prompt,
     build_user_prompt,
     decode_separator,
+    enforce_keep_terms,
+    parse_keep_terms,
     preserve_seed_constraints,
     sanitize_prompt,
     split_batch,
@@ -290,6 +292,16 @@ class ZEngineerEnhance:
                 "batch_mode": ("BOOLEAN", {"default": False}),
                 "batch_separator": ("STRING", {"multiline": False, "default": "\\n---\\n"}),
             },
+            "optional": {
+                "keep_terms": (
+                    "STRING",
+                    {
+                        "multiline": False,
+                        "default": "",
+                        "tooltip": "Comma-separated trigger words/phrases (e.g. LoRA triggers) kept verbatim in the output. Any the model drops are re-appended.",
+                    },
+                ),
+            },
         }
 
     RETURN_TYPES = ("STRING",)
@@ -316,6 +328,7 @@ class ZEngineerEnhance:
         sanitize_output,
         batch_mode,
         batch_separator,
+        keep_terms="",
     ):
         input_prompt = str(input_prompt or "").strip()
         if not input_prompt:
@@ -331,10 +344,11 @@ class ZEngineerEnhance:
             )
 
         system_prompt = str(system_prompt or "").strip() or V6_SYSTEM_PROMPT
+        kept_terms = parse_keep_terms(keep_terms)
         prompts = split_batch(input_prompt, bool(batch_mode), str(batch_separator or ""))
         outputs = []
         for idx, seed_prompt in enumerate(prompts):
-            chat_text = build_chat_prompt(system_prompt, build_user_prompt(seed_prompt))
+            chat_text = build_chat_prompt(system_prompt, build_user_prompt(seed_prompt, kept_terms))
             tokens = clip.tokenize(chat_text, llama_template="{}")
             do_sample = float(temperature) > 0.0
             token_ids = clip.generate(
@@ -352,6 +366,8 @@ class ZEngineerEnhance:
             cleaned = sanitize_prompt(raw_text, bool(strip_reasoning), bool(sanitize_output))
             if enforce_seed_terms:
                 cleaned = preserve_seed_constraints(seed_prompt, cleaned)
+            if kept_terms:
+                cleaned = enforce_keep_terms(cleaned, kept_terms)
             outputs.append(cleaned)
 
         if batch_mode:

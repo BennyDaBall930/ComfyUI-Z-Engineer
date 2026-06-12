@@ -80,11 +80,13 @@ def run_clip_checks(clip, tag):
         sanitize_output=True,
         batch_mode=False,
         batch_separator="\\n---\\n",
+        keep_terms="m4rty style, XJ-9_TriGGer",
     )
     text = out["result"][0]
     print(f"[{tag}] enhanced ({len(text.split())} words): {text[:300]}...")
     assert len(text.split()) > 10, "generation produced too little text"
     assert "<think>" not in text and "<|im_" not in text
+    assert "m4rty style" in text and "XJ-9_TriGGer" in text, "keep_terms missing from output"
     vram(f"{tag} after generate")
 
 

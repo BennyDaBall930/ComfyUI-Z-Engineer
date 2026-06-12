@@ -234,7 +234,7 @@ def seed_constraint_terms(seed: str) -> List[str]:
     return terms
 
 
-def build_user_prompt(seed: str) -> str:
+def build_user_prompt(seed: str, keep_terms: List[str] = None) -> str:
     terms = seed_constraint_terms(seed)
     content = (
         "Expand the seed into a polished 180-250 word single-paragraph Z-Image Turbo prompt. "
@@ -242,7 +242,41 @@ def build_user_prompt(seed: str) -> str:
     )
     if terms:
         content += "\nUse these seed phrases exactly, verbatim, and contiguous in the final prompt: " + "; ".join(terms) + "."
+    if keep_terms:
+        content += (
+            "\nThe final prompt must also contain these exact terms verbatim, character for character "
+            "(they are model trigger words, do not rephrase, split, or correct them): "
+            + "; ".join(keep_terms)
+            + "."
+        )
     return content + "\n\nSeed: " + normalize_ws(seed)
+
+
+def parse_keep_terms(keep_terms: str) -> List[str]:
+    """Split a user-supplied trigger-word field into unique, ordered terms.
+    Terms are separated by commas, semicolons, or newlines so multi-word
+    triggers stay intact."""
+    terms: List[str] = []
+    seen = set()
+    for part in re.split(r"[,;\n]+", str(keep_terms or "")):
+        part = normalize_ws(part).strip(" .")
+        if not part:
+            continue
+        key = part.lower()
+        if key not in seen:
+            seen.add(key)
+            terms.append(part)
+    return terms
+
+
+def enforce_keep_terms(prompt: str, terms: List[str]) -> str:
+    """Guarantee every keep-term appears verbatim in the prompt, appending any
+    the model dropped (or that sanitization removed) with original casing."""
+    prompt = normalize_ws(prompt)
+    missing = [term for term in terms if term.lower() not in prompt.lower()]
+    if missing:
+        prompt = normalize_ws(prompt.rstrip(".") + ", " + ", ".join(missing) + ".")
+    return prompt
 
 
 def preserve_seed_constraints(seed: str, prompt: str) -> str:

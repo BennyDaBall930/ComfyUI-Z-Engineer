@@ -69,6 +69,49 @@ def test_build_user_prompt_includes_seed():
     assert "brass key" in user
 
 
+def test_parse_keep_terms():
+    terms = prompt_utils.parse_keep_terms(" m4rty style,  neon glow ; m4rty style\nOzzy_v2 ")
+    assert terms == ["m4rty style", "neon glow", "Ozzy_v2"]
+    assert prompt_utils.parse_keep_terms("") == []
+    assert prompt_utils.parse_keep_terms(None) == []
+
+
+def test_enforce_keep_terms_appends_missing():
+    result = prompt_utils.enforce_keep_terms(
+        "A quiet alley at night.", ["m4rty style", "night"]
+    )
+    assert "m4rty style" in result
+    assert result.lower().count("night") == 1
+    assert result.endswith(".")
+
+
+def test_enforce_keep_terms_keeps_casing():
+    result = prompt_utils.enforce_keep_terms("a portrait", ["XJ-9_TriGGer"])
+    assert "XJ-9_TriGGer" in result
+
+
+def test_enforce_keep_terms_noop_when_present():
+    prompt = "a portrait, m4rty style, soft light."
+    assert prompt_utils.enforce_keep_terms(prompt, ["m4rty style"]) == prompt
+
+
+def test_build_user_prompt_with_keep_terms():
+    user = prompt_utils.build_user_prompt("a cat", ["m4rty style"])
+    assert "m4rty style" in user
+    assert "trigger words" in user
+
+
+def test_keep_terms_survive_sanitize_pipeline():
+    # Trigger word resembling a camera brand gets stripped by sanitize, then
+    # restored by enforce_keep_terms (the node applies it last).
+    raw = "A studio portrait, Canon EOS style, dramatic rim light."
+    terms = prompt_utils.parse_keep_terms("Canon EOS")
+    cleaned = prompt_utils.sanitize_prompt(raw)
+    assert "Canon" not in cleaned
+    restored = prompt_utils.enforce_keep_terms(cleaned, terms)
+    assert "Canon EOS" in restored
+
+
 def main():
     failures = 0
     for name, func in sorted(globals().items()):

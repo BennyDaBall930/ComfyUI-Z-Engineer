@@ -13,6 +13,8 @@ from .prompt_utils import (
     V6_SYSTEM_PROMPT,
     build_user_prompt,
     decode_separator,
+    enforce_keep_terms,
+    parse_keep_terms,
     preserve_seed_constraints,
     sanitize_prompt,
     split_batch,
@@ -128,6 +130,16 @@ class ZEngineer:
                 "retries": ("INT", {"default": 1, "min": 0, "max": 5}),
                 "error_mode": (["return_input", "return_error", "empty"], {"default": "return_input"}),
             },
+            "optional": {
+                "keep_terms": (
+                    "STRING",
+                    {
+                        "multiline": False,
+                        "default": "",
+                        "tooltip": "Comma-separated trigger words/phrases (e.g. LoRA triggers) kept verbatim in the output. Any the model drops are re-appended.",
+                    },
+                ),
+            },
         }
 
     RETURN_TYPES = ("STRING",)
@@ -159,13 +171,14 @@ class ZEngineer:
         max_tokens: int,
         timeout_seconds: int,
         retries: int,
+        keep_terms=None,
     ) -> str:
         endpoint = f"{normalize_api_url(api_url)}/chat/completions"
         payload = {
             "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": build_user_prompt(prompt)},
+                {"role": "user", "content": build_user_prompt(prompt, keep_terms)},
             ],
             "temperature": float(temperature),
             "top_p": float(top_p),
@@ -223,6 +236,7 @@ class ZEngineer:
         timeout_seconds,
         retries,
         error_mode,
+        keep_terms="",
     ):
         input_prompt = str(input_prompt or "").strip()
         if not input_prompt:
@@ -239,6 +253,7 @@ class ZEngineer:
         else:
             logging.info("Z-Engineer using model '%s'.", chosen_model)
 
+        kept_terms = parse_keep_terms(keep_terms)
         prompts = split_batch(input_prompt, bool(batch_mode), str(batch_separator or ""))
         outputs = []
         for idx, prompt in enumerate(prompts):
@@ -256,10 +271,13 @@ class ZEngineer:
                     max_tokens=max_tokens,
                     timeout_seconds=timeout_seconds,
                     retries=retries,
+                    keep_terms=kept_terms,
                 )
                 cleaned = sanitize_prompt(raw, bool(strip_reasoning), bool(sanitize_output))
                 if enforce_seed_terms:
                     cleaned = preserve_seed_constraints(prompt, cleaned)
+                if kept_terms:
+                    cleaned = enforce_keep_terms(cleaned, kept_terms)
                 outputs.append(cleaned)
             except Exception as exc:
                 outputs.append(self._error_result(str(exc), prompt, error_mode))
