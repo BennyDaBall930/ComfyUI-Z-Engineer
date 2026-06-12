@@ -1,11 +1,24 @@
-from .z_engineer import ZEngineer
+from .zengineer.api_node import ZEngineer
+from .zengineer.local_nodes import (
+    ZEngineerCLIPLoader,
+    ZEngineerCLIPLoaderGGUF,
+    ZEngineerEnhance,
+)
 
 NODE_CLASS_MAPPINGS = {
-    "ZEngineer": ZEngineer
+    "ZEngineerCLIPLoader": ZEngineerCLIPLoader,
+    "ZEngineerCLIPLoaderGGUF": ZEngineerCLIPLoaderGGUF,
+    "ZEngineerEnhance": ZEngineerEnhance,
+    "ZEngineer": ZEngineer,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "ZEngineer": "Z-Engineer"
+    "ZEngineerCLIPLoader": "Z-Engineer CLIP Loader (Safetensors / Shards)",
+    "ZEngineerCLIPLoaderGGUF": "Z-Engineer CLIP Loader (GGUF)",
+    "ZEngineerEnhance": "Z-Engineer Prompt Enhancer (Local)",
+    "ZEngineer": "Z-Engineer Prompt Enhancer (API)",
 }
 
-__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
+WEB_DIRECTORY = "./web"
+
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
