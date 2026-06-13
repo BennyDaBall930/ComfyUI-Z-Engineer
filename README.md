@@ -2,6 +2,8 @@
 
 Run [Z-Image-Engineer-V6](https://huggingface.co/BennyDaBall/Z-Image-Engineer-V6) fully inside ComfyUI: load the Qwen3-4B prompt model from sharded HuggingFace safetensors **or** [GGUF quants](https://huggingface.co/BennyDaBall/Z-Image-Engineer-V6-GGUF), use it as the **Z-Image Turbo text encoder (CLIP)**, and use the *same loaded model* as a **local prompt enhancer** with a live preview on the node. No LM Studio or external server required.
 
+![Z-Engineer GGUF loader feeding the local prompt enhancer, with keep_terms set and the enhanced prompt previewed on the node](docs/images/enhancer-nodes.png)
+
 ## Nodes
 
 | Node | What it does |
