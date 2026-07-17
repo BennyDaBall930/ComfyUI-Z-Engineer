@@ -147,13 +147,47 @@ def _load_clip_from_state_dict(state_dict, model_options):
 
 def _resolve_comfyui_gguf():
     """Find an already-imported ComfyUI-GGUF custom node package and return
-    (gguf_clip_loader, GGMLOps, GGUFModelPatcher), or None."""
-    candidates = []
-    for name in list(sys.modules):
-        tail = name.rsplit(".", 1)[-1].lower().replace("_", "-")
-        if tail == "comfyui-gguf":
-            candidates.append(name)
-    for name in sorted(candidates, key=len):
+    (gguf_clip_loader, GGMLOps, GGUFModelPatcher), or None.
+
+    Older ComfyUI registered a custom node directory in ``sys.modules`` under
+    its bare folder name ("ComfyUI-GGUF"); current ComfyUI uses the full
+    on-disk path with dots mangled to ``_x_`` (nodes.py load_custom_node), so
+    the old exact-leaf match never fires (issue #13). Match the normalized
+    last path/dot segment of the module name, plus the package's on-disk
+    folder name. Only real packages (with ``__path__``) can resolve the
+    relative ``.loader`` / ``.ops`` / ``.nodes`` submodules; a wrong guess is
+    filtered by the import below. Some modules expose exotic ``__path__``
+    objects (e.g. ``torch.classes``), so treat every candidate defensively.
+    """
+
+    def _norm(text):
+        return str(text or "").lower().replace("_", "-")
+
+    def _leaf(name):
+        norm = _norm(name).replace("\\", "/")
+        return norm.rsplit("/", 1)[-1].rsplit(".", 1)[-1]
+
+    def _folder_names(mod):
+        try:
+            paths = [p for p in list(getattr(mod, "__path__", None) or []) if isinstance(p, str)]
+        except TypeError:
+            paths = []
+        init = getattr(mod, "__file__", None)
+        if isinstance(init, str) and os.path.basename(init) == "__init__.py":
+            paths.append(os.path.dirname(init))
+        return [os.path.basename(os.path.normpath(p)) for p in paths if p]
+
+    anchors = []
+    for name, mod in list(sys.modules.items()):
+        try:
+            if mod is None or not getattr(mod, "__path__", None):
+                continue
+            if "comfyui-gguf" in _leaf(name) or any("comfyui-gguf" in _norm(f) for f in _folder_names(mod)):
+                anchors.append(name)
+        except Exception:
+            continue
+
+    for name in sorted(set(anchors), key=len):
         try:
             loader_mod = importlib.import_module(".loader", name)
             ops_mod = importlib.import_module(".ops", name)

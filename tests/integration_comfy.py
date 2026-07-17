@@ -23,6 +23,11 @@ os.chdir(COMFY_ROOT)
 
 import torch  # noqa: E402
 
+from comfy.cli_args import args as _comfy_args  # noqa: E402
+
+if os.environ.get("ZE_TEST_CPU"):
+    _comfy_args.cpu = True  # same as launching ComfyUI with --cpu; must be set before importing model_management
+
 import comfy.model_management  # noqa: E402
 import folder_paths  # noqa: E402  (must come after sys.path insert)
 
@@ -92,10 +97,17 @@ def run_clip_checks(clip, tag):
 
 def stage_gguf(local_nodes):
     print("\n=== Stage: GGUF via ComfyUI-GGUF ===")
-    # make sure ComfyUI-GGUF is importable like ComfyUI would have it
+    # Register ComfyUI-GGUF the way CURRENT ComfyUI does (nodes.py
+    # load_custom_node): the sys.modules key is the full directory path with
+    # dots mangled to _x_, NOT the bare folder name — the naming that broke
+    # the resolver in issue #13.
     gguf_dir = os.path.join(COMFY_ROOT, "custom_nodes", "ComfyUI-GGUF")
-    if "ComfyUI-GGUF" not in sys.modules and os.path.isdir(gguf_dir):
-        load_package("ComfyUI-GGUF", gguf_dir)
+    sys_key = gguf_dir.replace(".", "_x_")
+    if sys_key not in sys.modules and "ComfyUI-GGUF" not in sys.modules and os.path.isdir(gguf_dir):
+        load_package(sys_key, gguf_dir)
+    assert local_nodes._resolve_comfyui_gguf() is not None, (
+        "resolver did not find ComfyUI-GGUF under its path-style module name"
+    )
     loader = local_nodes.ZEngineerCLIPLoaderGGUF()
     entries = local_nodes.list_gguf_entries()
     print("gguf entries:", sorted(entries.keys()))
