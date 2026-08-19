@@ -152,14 +152,100 @@ def stage_fallback(local_nodes):
     vram("fallback after unload")
 
 
+LFM_SEED_PROMPT = "a red umbrella on a wet sidewalk at night, neon reflections"
+
+
+def run_lfm_checks(llm, tag):
+    from zengineer_pkg import prompt_utils
+
+    lfm_local = sys.modules["zengineer_pkg.lfm_local"]
+    node = lfm_local.ZEngineerEnhanceLFM()
+    out = node.enhance(
+        llm=llm,
+        input_prompt=LFM_SEED_PROMPT,
+        system_prompt=prompt_utils.LFM_V4_SYSTEM_PROMPT,
+        seed=6606,
+        temperature=0.2,
+        top_p=0.9,
+        top_k=40,
+        min_p=0.03,
+        repetition_penalty=1.05,
+        max_tokens=96,
+        enforce_seed_terms=False,
+        strip_reasoning=True,
+        sanitize_output=True,
+        batch_mode=False,
+        batch_separator="\\n---\\n",
+        keep_terms="m4rty style, XJ-9_TriGGer",
+    )
+    text = out["result"][0]
+    print(f"[{tag}] enhanced ({len(text.split())} words): {text[:300]}...")
+    assert len(text.split()) > 10, "generation produced too little text"
+    assert "<think>" not in text and "<|im_" not in text
+    assert "�" not in text, "decode produced replacement characters"
+    assert "m4rty style" in text and "XJ-9_TriGGer" in text, "keep_terms missing from output"
+    vram(f"{tag} after generate")
+
+
+def stage_lfm(local_nodes):
+    print("\n=== Stage: LFM2.5 GGUF enhancer ===")
+    lfm_local = sys.modules["zengineer_pkg.lfm_local"]
+    loader = lfm_local.ZEngineerLFMLoader()
+    entries = lfm_local.list_lfm_entries()
+    name = next(k for k in sorted(entries) if "LFM2.5-1.2B-Z-Image-Engineer-V4-Q4_K_M" in k)
+    (llm,) = loader.load_llm(name)
+    vram("lfm gguf after load")
+    run_lfm_checks(llm, "lfm-gguf")
+
+    # guard: the CLIP loaders must refuse lfm2 models with a clear message
+    try:
+        local_nodes.ZEngineerCLIPLoaderGGUF().load_clip(name)
+        raise AssertionError("CLIP GGUF loader accepted an lfm2 GGUF")
+    except ValueError as exc:
+        assert "not a text encoder" in str(exc), str(exc)
+        print("[lfm-gguf] CLIP GGUF loader guard OK")
+    del llm
+    unload()
+    vram("lfm gguf after unload")
+
+
+def stage_lfm_safetensors(local_nodes):
+    print("\n=== Stage: LFM2.5 safetensors enhancer ===")
+    lfm_local = sys.modules["zengineer_pkg.lfm_local"]
+    loader = lfm_local.ZEngineerLFMLoader()
+    entries = lfm_local.list_lfm_entries()
+    name = next(
+        k for k in sorted(entries)
+        if k.endswith("/") and "LFM2.5-1.2B-Z-Image-Engineer-V4" in k
+    )
+    (llm,) = loader.load_llm(name)
+    vram("lfm safetensors after load")
+    run_lfm_checks(llm, "lfm-st")
+
+    # guard: the safetensors CLIP loader must refuse lfm2 checkpoints
+    st_entries = local_nodes.list_safetensors_entries()
+    lfm_st = next((k for k in sorted(st_entries) if "LFM2.5-1.2B-Z-Image-Engineer-V4" in k), None)
+    if lfm_st is not None:
+        try:
+            local_nodes.ZEngineerCLIPLoader().load_clip(lfm_st)
+            raise AssertionError("CLIP safetensors loader accepted an lfm2 checkpoint")
+        except ValueError as exc:
+            assert "not a text encoder" in str(exc), str(exc)
+            print("[lfm-st] CLIP safetensors loader guard OK")
+    del llm
+    unload()
+    vram("lfm safetensors after unload")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stage", default="all", choices=["gguf", "shards", "fallback", "all"])
+    parser.add_argument("--stage", default="all", choices=["gguf", "shards", "fallback", "lfm", "lfm-st", "all"])
     args = parser.parse_args()
 
     load_package("zengineer_pkg", os.path.join(NODE_ROOT, "zengineer"))
     importlib.import_module("zengineer_pkg.local_nodes")
     importlib.import_module("zengineer_pkg.gguf_fallback")
+    importlib.import_module("zengineer_pkg.lfm_local")
     local_nodes = sys.modules["zengineer_pkg.local_nodes"]
 
     vram("baseline")
@@ -167,6 +253,8 @@ def main():
         "gguf": stage_gguf,
         "shards": stage_shards,
         "fallback": stage_fallback,
+        "lfm": stage_lfm,
+        "lfm-st": stage_lfm_safetensors,
     }
     selected = list(stages) if args.stage == "all" else [args.stage]
     for key in selected:

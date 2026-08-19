@@ -48,6 +48,19 @@ def _read_arch(reader, gguf):
     return str(field.parts[field.data[-1]], encoding="utf-8")
 
 
+def read_gguf_architecture(path):
+    """Return general.architecture of a GGUF file, or None if it cannot be
+    determined (e.g. the gguf package is not installed)."""
+    try:
+        import gguf
+    except ImportError:
+        return None
+    try:
+        return _read_arch(gguf.GGUFReader(path), gguf)
+    except Exception:
+        return None
+
+
 def load_gguf_state_dict_dequant(path, dtype=torch.float16):
     try:
         import gguf

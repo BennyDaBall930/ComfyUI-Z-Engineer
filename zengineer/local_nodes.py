@@ -235,6 +235,11 @@ class ZEngineerCLIPLoader:
         else:
             state_dict = comfy.utils.load_torch_file(path, safe_load=True)
 
+        if "model.layers.0.conv.in_proj.weight" in state_dict:  # LFM2/LFM2.5 checkpoint
+            from .lfm_local import NOT_A_TEXT_ENCODER
+
+            raise ValueError(NOT_A_TEXT_ENCODER)
+
         clip = _load_clip_from_state_dict(state_dict, _base_model_options(device))
         return (clip,)
 
@@ -265,6 +270,13 @@ class ZEngineerCLIPLoaderGGUF:
         path = entries.get(gguf_name)
         if path is None:
             raise FileNotFoundError(f"GGUF '{gguf_name}' not found under text_encoders/clip folders")
+
+        from .gguf_fallback import read_gguf_architecture
+
+        if read_gguf_architecture(path) == "lfm2":
+            from .lfm_local import NOT_A_TEXT_ENCODER
+
+            raise ValueError(NOT_A_TEXT_ENCODER)
 
         model_options = _base_model_options(device)
         resolved = _resolve_comfyui_gguf()
