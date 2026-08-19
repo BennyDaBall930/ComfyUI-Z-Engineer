@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-z-engineer"
 description = "Z-Image-Engineer for ComfyUI: load the Qwen3-4B prompt model (sharded HF safetensors or GGUF) as a Z-Image text encoder, run local in-ComfyUI prompt enhancement with live preview, and run the fast LFM2.5-1.2B Engineer as a standalone enhancer (CUDA/ROCm/CPU) - no external LLM server required."
-version = "2.2.0"
+version = "2.2.1"
 license = { file = "LICENSE" }
 dependencies = ["requests", "gguf>=0.10.0"]
 

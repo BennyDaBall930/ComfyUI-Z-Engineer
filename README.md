@@ -93,6 +93,8 @@ Download any quant from [BennyDaBall/Z-Image-Engineer-V6-GGUF](https://huggingfa
 3. Add **Z-Engineer Prompt Enhancer (LFM2.5 Local)**, wire `llm` in, type your seed. The V4 system prompt is the node default.
 4. Wire the `prompt` STRING into your CLIP Text Encode.
 
+Or skip the wiring: load the ready-made [`example_workflows/z_image_turbo_lfm25_enhancer.json`](example_workflows/z_image_turbo_lfm25_enhancer.json) (also in ComfyUI's template browser under *Workflows → Browse Templates → ComfyUI-Z-Engineer*) — LFM2.5 writes the prompt, Z-Image-Engineer-V6 GGUF encodes it, Z-Image Turbo renders.
+
 ```text
 [Z-Engineer LFM2.5 Enhancer Loader] ──llm──> [Z-Engineer Prompt Enhancer (LFM2.5 Local)] ──prompt──> [CLIP Text Encode]
 [Z-Engineer CLIP Loader (Qwen3-4B model)] ──────────────────────────────clip──────────────────────────────^
