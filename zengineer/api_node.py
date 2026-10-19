@@ -62,7 +62,7 @@ def discover_models(api_url: str, timeout: int = 5) -> List[str]:
         response.raise_for_status()
         data = response.json()
         return [str(item.get("id", "")).strip() for item in data.get("data", []) if item.get("id")]
-    except Exception as exc:
+    except (requests.RequestException, ValueError, AttributeError, TypeError) as exc:
         logging.warning("Z-Engineer model discovery failed: %s", exc)
         return []
 
@@ -238,7 +238,7 @@ class ZEngineer:
                         "model returned only reasoning_content; increase max_tokens or use a non-thinking/no-think model"
                     )
                 return content
-            except Exception as exc:
+            except (requests.RequestException, ValueError, KeyError, IndexError, TypeError, RuntimeError) as exc:
                 last_exc = exc
                 logging.warning("Z-Engineer request attempt %s failed: %s", attempt + 1, exc)
                 if not _is_transient(exc):
@@ -311,7 +311,7 @@ class ZEngineer:
                 if kept_terms:
                     cleaned = enforce_keep_terms(cleaned, kept_terms)
                 outputs.append(cleaned)
-            except Exception as exc:
+            except (RuntimeError, ValueError, requests.RequestException) as exc:
                 failed = True
                 outputs.append(self._error_result(str(exc), prompt, error_mode))
 

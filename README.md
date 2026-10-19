@@ -61,7 +61,7 @@ ComfyUI/models/text_encoders/Z-Image-Engineer-V6-Q4_K_M.gguf
 
 Download any quant from [BennyDaBall/Z-Image-Engineer-V6-GGUF](https://huggingface.co/BennyDaBall/Z-Image-Engineer-V6-GGUF) (Q4_K_M is a good default; F16 for maximum fidelity). Installing [ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) is strongly recommended — the quant then stays quantized in VRAM.
 
-**NVFP4 / MXFP4:** the `NVFP4` quant (built for RTX 50 / Blackwell) needs the `gguf` Python package **0.19.0 or newer** (installed automatically from this node's requirements; manual: `pip install -U "gguf>=0.19.0"` in ComfyUI's Python, then restart). With an older `gguf` the loader stops with a clear message instead of a cryptic error. Z-Engineer also adds a fast GPU dequant for NVFP4 and MXFP4 to ComfyUI-GGUF, which otherwise falls back to slow numpy for these types (this speeds up the stock `CLIPLoaderGGUF` too).
+**NVFP4 / MXFP4:** the `NVFP4` quant (built for RTX 50 / Blackwell) needs the `gguf` Python package **0.19.0 or newer** (installed automatically from this node's requirements; manual: `pip install -U "gguf>=0.19.0"` in ComfyUI's Python, then restart). With an older `gguf` the loader stops with a clear message instead of a cryptic error. The Z-Engineer GGUF loader also adds a fast GPU dequant for NVFP4 and MXFP4 to ComfyUI-GGUF, which otherwise falls back to slow numpy for these types. Once a Z-Engineer GGUF loader has run in a session, the stock `CLIPLoaderGGUF` uses it too.
 
 ## Usage
 

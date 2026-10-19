@@ -85,7 +85,7 @@ LFM2_PRETOK_REGEX = (
 def _require_transformers():
     try:
         from transformers import Lfm2Config, Lfm2ForCausalLM  # noqa: F401
-    except Exception as exc:
+    except ImportError as exc:
         raise RuntimeError(
             "The LFM2.5 Z-Engineer nodes need a transformers version with LFM2 support. "
             "Upgrade with: pip install -U \"transformers>=4.54\" (use your ComfyUI venv's pip)."
@@ -110,7 +110,8 @@ def _field(reader, key, default=None):
         return default
     try:
         return field.contents()
-    except Exception:
+    except (ValueError, IndexError, TypeError, UnicodeDecodeError) as exc:
+        logging.warning("Z-Engineer LFM: could not read GGUF field '%s' (%s); using default", key, exc)
         return default
 
 
@@ -130,7 +131,7 @@ def load_lfm2_gguf_state_dict(reader, gguf, dtype):
         else:
             try:
                 array = gguf.quants.dequantize(tensor.data, tensor.tensor_type)
-            except Exception as exc:
+            except (NotImplementedError, ValueError, KeyError, TypeError) as exc:
                 raise ValueError(
                     f"Cannot dequantize tensor '{tensor.name}' with type {tensor.tensor_type!r}: {exc}. "
                     "Use a different quant (Q3_K..Q8_0/F16 are supported by the gguf package)."
@@ -248,7 +249,8 @@ def list_lfm_safetensors_dirs():
                 with open(os.path.join(dirpath, "config.json"), "r", encoding="utf-8") as handle:
                     if json.load(handle).get("model_type") != "lfm2":
                         continue
-            except Exception:
+            except (OSError, ValueError) as exc:
+                logging.warning("Z-Engineer LFM: skipping '%s' (unreadable config.json: %s)", dirpath, exc)
                 continue
             label = os.path.relpath(dirpath, root).replace(os.sep, "/") + "/"
             entries.setdefault(label, dirpath)

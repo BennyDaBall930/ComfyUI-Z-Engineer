@@ -69,8 +69,10 @@ def read_gguf_architecture(path):
                 "NVFP4 GGUFs need gguf 0.19.0 or newer. In ComfyUI's Python run: "
                 'pip install -U "gguf>=0.19.0" and restart ComfyUI.'
             ) from exc
+        logging.warning("Z-Engineer: could not read GGUF header of '%s': %s", os.path.basename(path), exc)
         return None
-    except Exception:
+    except (OSError, KeyError, IndexError) as exc:
+        logging.warning("Z-Engineer: could not read GGUF header of '%s': %s", os.path.basename(path), exc)
         return None
     if any(t.name.endswith(".scale") for t in reader.tensors):
         raise RuntimeError(
@@ -107,7 +109,7 @@ def load_gguf_state_dict_dequant(path, dtype=torch.float16):
         else:
             try:
                 array = gguf.quants.dequantize(tensor.data, tensor_type)
-            except Exception as exc:
+            except (NotImplementedError, ValueError, KeyError, TypeError) as exc:
                 raise ValueError(
                     f"Cannot dequantize tensor '{tensor.name}' with type {tensor_type!r}: {exc}. "
                     "Install ComfyUI-GGUF or use a different quant."

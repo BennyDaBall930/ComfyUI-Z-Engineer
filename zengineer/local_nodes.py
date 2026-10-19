@@ -21,7 +21,7 @@ import comfy.sd
 import comfy.utils
 import folder_paths
 
-from .fp4_dequant import register_comfyui_gguf_fp4
+from .fp4_dequant import ensure_fp4_kernels
 from .prompt_utils import (
     V6_SYSTEM_PROMPT,
     build_chat_prompt,
@@ -46,7 +46,9 @@ def _model_roots(categories):
     for category in categories:
         try:
             paths = folder_paths.get_folder_paths(category)
-        except Exception:
+        except KeyError:
+            # optional categories (e.g. clip_gguf) only exist with some node packs
+            logging.debug("Z-Engineer: model folder category '%s' is not registered", category)
             continue
         for root in paths:
             norm = os.path.normpath(root)
@@ -147,64 +149,49 @@ def _load_clip_from_state_dict(state_dict, model_options):
     )
 
 
-def _resolve_comfyui_gguf():
-    """Find an already-imported ComfyUI-GGUF custom node package and return
-    (gguf_clip_loader, GGMLOps, GGUFModelPatcher), or None.
+_COMFYUI_GGUF = None
 
-    Older ComfyUI registered a custom node directory in ``sys.modules`` under
-    its bare folder name ("ComfyUI-GGUF"); current ComfyUI uses the full
-    on-disk path with dots mangled to ``_x_`` (nodes.py load_custom_node), so
-    the old exact-leaf match never fires (issue #13). Match the normalized
-    last path/dot segment of the module name, plus the package's on-disk
-    folder name. Only real packages (with ``__path__``) can resolve the
-    relative ``.loader`` / ``.ops`` / ``.nodes`` submodules; a wrong guess is
-    filtered by the import below. Some modules expose exotic ``__path__``
-    objects (e.g. ``torch.classes``), so treat every candidate defensively.
-    """
 
-    def _norm(text):
-        return str(text or "").lower().replace("_", "-")
-
-    def _leaf(name):
-        norm = _norm(name).replace("\\", "/")
-        return norm.rsplit("/", 1)[-1].rsplit(".", 1)[-1]
-
-    def _folder_names(mod):
-        try:
-            paths = [p for p in list(getattr(mod, "__path__", None) or []) if isinstance(p, str)]
-        except TypeError:
-            paths = []
-        init = getattr(mod, "__file__", None)
-        if isinstance(init, str) and os.path.basename(init) == "__init__.py":
-            paths.append(os.path.dirname(init))
-        return [os.path.basename(os.path.normpath(p)) for p in paths if p]
-
-    anchors = []
-    for name, mod in list(sys.modules.items()):
-        try:
-            if mod is None or not getattr(mod, "__path__", None):
-                continue
-            if "comfyui-gguf" in _leaf(name) or any("comfyui-gguf" in _norm(f) for f in _folder_names(mod)):
-                anchors.append(name)
-        except Exception:
+def _comfyui_gguf_module_names():
+    """sys.modules names of the loaded ComfyUI-GGUF pack, taken from ComfyUI's
+    own record of loaded custom nodes (nodes.LOADED_MODULE_DIRS). Current
+    ComfyUI registers a pack directory under its path with dots mangled to
+    ``_x_``; older ComfyUI used the bare folder name (issue #13)."""
+    try:
+        import nodes
+    except ImportError:
+        return []
+    names = []
+    for module_name, module_dir in getattr(nodes, "LOADED_MODULE_DIRS", {}).items():
+        folder = os.path.basename(os.path.normpath(module_dir)).lower().replace("_", "-")
+        if not folder.startswith("comfyui-gguf"):
             continue
+        for candidate in (module_dir.replace(".", "_x_"), module_name):
+            if candidate in sys.modules and candidate not in names:
+                names.append(candidate)
+    return names
 
-    for name in sorted(set(anchors), key=len):
+
+def _resolve_comfyui_gguf():
+    """Return (gguf_clip_loader, GGMLOps, GGUFModelPatcher) from the installed
+    ComfyUI-GGUF pack, or None when it is not installed. Also makes sure the
+    Z-Engineer FP4 (NVFP4/MXFP4) dequant kernels are available to it."""
+    global _COMFYUI_GGUF
+    if _COMFYUI_GGUF is not None:
+        return _COMFYUI_GGUF
+    for name in _comfyui_gguf_module_names():
         try:
             loader_mod = importlib.import_module(".loader", name)
             ops_mod = importlib.import_module(".ops", name)
             nodes_mod = importlib.import_module(".nodes", name)
-            try:
-                register_comfyui_gguf_fp4(importlib.import_module(".dequant", name))
-            except Exception as exc:
-                logging.warning("Z-Engineer: could not add FP4 dequant to ComfyUI-GGUF (%s)", exc)
-            return (
-                loader_mod.gguf_clip_loader,
-                ops_mod.GGMLOps,
-                nodes_mod.GGUFModelPatcher,
-            )
-        except Exception as exc:
-            logging.warning("Z-Engineer: found '%s' but could not use it (%s)", name, exc)
+            dequant_mod = importlib.import_module(".dequant", name)
+            resolved = (loader_mod.gguf_clip_loader, ops_mod.GGMLOps, nodes_mod.GGUFModelPatcher)
+        except (ImportError, AttributeError) as exc:
+            logging.warning("Z-Engineer: found ComfyUI-GGUF as '%s' but could not use it (%s)", name, exc)
+            continue
+        ensure_fp4_kernels(dequant_mod)
+        _COMFYUI_GGUF = resolved
+        return resolved
     return None
 
 

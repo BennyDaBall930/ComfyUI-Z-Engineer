@@ -94,6 +94,18 @@ def fp4_dequantize_functions(gguf):
     return funcs
 
 
+_KERNELS_REGISTERED = False
+
+
+def ensure_fp4_kernels(dequant_module):
+    """Register the FP4 kernels with ComfyUI-GGUF once per session. Called by
+    the Z-Engineer GGUF loader; nothing is registered at import time."""
+    global _KERNELS_REGISTERED
+    if not _KERNELS_REGISTERED:
+        register_comfyui_gguf_fp4(dequant_module)
+        _KERNELS_REGISTERED = True
+
+
 def register_comfyui_gguf_fp4(dequant_module):
     """Add the FP4 kernels to ComfyUI-GGUF's dequant table (never overriding
     a kernel ComfyUI-GGUF ships itself). Returns the type names added."""
@@ -126,5 +138,5 @@ def gguf_version():
         from importlib.metadata import version
 
         return version("gguf")
-    except Exception:
+    except ImportError:  # includes importlib.metadata.PackageNotFoundError
         return "(unknown version)"

@@ -9,27 +9,6 @@ from .zengineer.local_nodes import (
     ZEngineerEnhance,
 )
 
-try:
-    # ComfyUI loads custom nodes alphabetically, so ComfyUI-GGUF is normally
-    # imported already; registering its FP4 (NVFP4/MXFP4) torch dequant here
-    # also speeds up the stock CLIPLoaderGGUF. The Z-Engineer GGUF loader
-    # registers again on use in case the load order differs.
-    from .zengineer.local_nodes import _resolve_comfyui_gguf
-
-    if _resolve_comfyui_gguf() is None:
-        # Load order is not alphabetical on every OS: retry on each queued
-        # prompt until ComfyUI-GGUF is found, then stop.
-        from server import PromptServer
-
-        def _register_fp4_on_prompt(json_data):
-            if not getattr(_register_fp4_on_prompt, "done", False):
-                _register_fp4_on_prompt.done = _resolve_comfyui_gguf() is not None
-            return json_data
-
-        PromptServer.instance.add_on_prompt_handler(_register_fp4_on_prompt)
-except Exception:
-    pass
-
 NODE_CLASS_MAPPINGS = {
     "ZEngineerCLIPLoader": ZEngineerCLIPLoader,
     "ZEngineerCLIPLoaderGGUF": ZEngineerCLIPLoaderGGUF,

@@ -1,5 +1,9 @@
 # Changelog
 
+## v2.3.1 (2026-10-19)
+
+- Registry-safe loading, no behavior change: nothing runs at import beyond registering the nodes. The FP4 dequant kernels are registered once, by the Z-Engineer GGUF loader when it runs; ComfyUI-GGUF is located through ComfyUI's list of loaded node packs; no prompt hooks; specific exception handling with warnings instead of silent catch-alls.
+
 ## v2.3.0 (2026-10-19)
 
 - NVFP4 GGUF support: loads `Z-Image-Engineer-V6-NVFP4.gguf` (RTX 50 / Blackwell) through the Z-Engineer GGUF loader and the stock `CLIPLoaderGGUF`.
