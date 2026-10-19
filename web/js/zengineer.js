@@ -7,7 +7,7 @@ import { ComfyWidgets } from "../../../scripts/widgets.js";
 //    native textarea grip, without resizing the whole node (issue #9).
 //    Heights persist with the workflow; double-click the grip strip to reset.
 
-const PREVIEW_NODES = new Set(["ZEngineerEnhance", "ZEngineer"]);
+const PREVIEW_NODES = new Set(["ZEngineerEnhance", "ZEngineerEnhanceLFM", "ZEngineer"]);
 const PREVIEW_PREFIX = "preview_";
 const HEIGHTS_PROP = "zengineer.box_heights";
 const MIN_BOX_HEIGHT = 40;

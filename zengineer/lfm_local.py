@@ -126,7 +126,7 @@ def load_lfm2_gguf_state_dict(reader, gguf, dtype):
             continue
         shape = tuple(reversed(tuple(int(dim) for dim in tensor.shape)))
         if tensor.tensor_type in (gguf.GGMLQuantizationType.F32, gguf.GGMLQuantizationType.F16):
-            array = np.asarray(tensor.data)
+            array = np.array(tensor.data, copy=True)
         else:
             try:
                 array = gguf.quants.dequantize(tensor.data, tensor.tensor_type)
@@ -135,7 +135,7 @@ def load_lfm2_gguf_state_dict(reader, gguf, dtype):
                     f"Cannot dequantize tensor '{tensor.name}' with type {tensor.tensor_type!r}: {exc}. "
                     "Use a different quant (Q3_K..Q8_0/F16 are supported by the gguf package)."
                 ) from exc
-        torch_tensor = torch.from_numpy(np.array(array, copy=True)).reshape(shape)
+        torch_tensor = torch.from_numpy(np.ascontiguousarray(array)).reshape(shape)
         if hf_name.endswith("conv.conv.weight") and torch_tensor.ndim == 2:
             # llama.cpp stores the depthwise Conv1d weight squeezed to (dim, L)
             torch_tensor = torch_tensor.unsqueeze(1)
@@ -303,7 +303,9 @@ class ZEngineerLFM:
 
     def generate_text(self, chat_text, *, do_sample, max_tokens, temperature, top_k, top_p,
                       min_p, repetition_penalty, seed):
-        comfy.model_management.load_models_gpu([self.patcher])
+        # plain HF nn.Linear layers cannot stream weights, so a partial load would
+        # leave layers on the CPU and break generate(); load fully like ComfyUI's CLIP
+        comfy.model_management.load_models_gpu([self.patcher], force_full_load=True)
         device = self.patcher.load_device
         lm = self.container.lm
 
@@ -443,7 +445,7 @@ class ZEngineerEnhanceLFM:
                 "top_p": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "top_k": ("INT", {"default": 40, "min": 0, "max": 1000}),
                 "min_p": ("FLOAT", {"default": 0.03, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "repetition_penalty": ("FLOAT", {"default": 1.05, "min": 0.0, "max": 5.0, "step": 0.01}),
+                "repetition_penalty": ("FLOAT", {"default": 1.05, "min": 0.01, "max": 5.0, "step": 0.01}),
                 "max_tokens": ("INT", {"default": 320, "min": 32, "max": 4096}),
                 "enforce_seed_terms": ("BOOLEAN", {"default": True, "tooltip": "Deterministically re-append seed phrases (counts, colors, quoted text) the model dropped."}),
                 "strip_reasoning": ("BOOLEAN", {"default": True}),

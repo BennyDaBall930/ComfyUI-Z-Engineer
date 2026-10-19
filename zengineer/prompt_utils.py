@@ -4,6 +4,7 @@ This module is intentionally free of ComfyUI imports so it can be unit
 tested standalone.
 """
 
+import logging
 import re
 from typing import List
 
@@ -298,6 +299,10 @@ def enforce_keep_terms(prompt: str, terms: List[str]) -> str:
 
 def preserve_seed_constraints(seed: str, prompt: str) -> str:
     prompt = normalize_ws(prompt)
+    if not prompt:
+        # don't dress an empty generation up as a full-length boilerplate prompt
+        logging.warning("Z-Engineer: the model returned no prompt text (max_tokens spent on reasoning?); keeping the seed prompt")
+        return normalize_ws(seed)
     missing = [term for term in seed_constraint_terms(seed) if term.lower() not in prompt.lower()]
     if missing:
         addition = " The composition explicitly includes " + ", ".join(missing) + "."
@@ -326,7 +331,8 @@ def preserve_seed_constraints(seed: str, prompt: str) -> str:
 
 def decode_separator(batch_separator: str) -> str:
     separator = str(batch_separator or "\\n---\\n")
-    return separator.encode("utf-8").decode("unicode_escape")
+    escapes = {"n": "\n", "t": "\t", "\\": "\\"}
+    return re.sub(r"\\(.)", lambda m: escapes.get(m.group(1), m.group(0)), separator)
 
 
 def split_batch(input_prompt: str, batch_mode: bool, batch_separator: str) -> List[str]:

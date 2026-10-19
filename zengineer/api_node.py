@@ -6,6 +6,7 @@ ZEngineerEnhance node, which needs no external server.
 
 import logging
 from typing import List, Tuple
+from urllib.parse import urlsplit
 
 import requests
 
@@ -42,6 +43,11 @@ PREFERRED_MODELS = [
 
 def normalize_api_url(api_url: str) -> str:
     api_url = (api_url or DEFAULT_API_URL).strip().rstrip("/")
+    parts = urlsplit(api_url)
+    if parts.scheme not in ("http", "https") or not parts.netloc or parts.query or parts.fragment:
+        raise ValueError(
+            f"Z-Engineer: api_url must be a plain http(s) server URL like {DEFAULT_API_URL} (no query or fragment), got {api_url!r}"
+        )
     if api_url.endswith("/chat/completions"):
         return api_url[: -len("/chat/completions")]
     if not api_url.endswith("/v1"):
@@ -76,8 +82,30 @@ def choose_model(requested_model: str, api_url: str, discover: bool) -> Tuple[st
     return (available[0] if available else DEFAULT_MODEL), available
 
 
+# Input signatures whose last run hit an error; IS_CHANGED forces a re-run for
+# these so a server outage is not cached as a finished result.
+_FAILED_INPUTS = set()
+
+
+def _input_key(inputs):
+    inputs = {k: v for k, v in inputs.items() if k != "self"}
+    inputs.setdefault("keep_terms", "")
+    return repr(sorted(inputs.items()))
+
+
+def _is_transient(exc):
+    if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
+        return True
+    response = getattr(exc, "response", None)
+    return isinstance(exc, requests.HTTPError) and response is not None and response.status_code >= 500
+
+
 class ZEngineer:
     """Prompt enhancement through an OpenAI-compatible /chat/completions API."""
+
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        return float("nan") if _input_key(kwargs) in _FAILED_INPUTS else ""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -213,6 +241,8 @@ class ZEngineer:
             except Exception as exc:
                 last_exc = exc
                 logging.warning("Z-Engineer request attempt %s failed: %s", attempt + 1, exc)
+                if not _is_transient(exc):
+                    break
         raise RuntimeError(str(last_exc))
 
     def generate_prompt(
@@ -238,6 +268,7 @@ class ZEngineer:
         error_mode,
         keep_terms="",
     ):
+        key = _input_key(dict(locals()))
         input_prompt = str(input_prompt or "").strip()
         if not input_prompt:
             return {"ui": {"text": [""]}, "result": ("",)}
@@ -256,6 +287,7 @@ class ZEngineer:
         kept_terms = parse_keep_terms(keep_terms)
         prompts = split_batch(input_prompt, bool(batch_mode), str(batch_separator or ""))
         outputs = []
+        failed = False
         for idx, prompt in enumerate(prompts):
             try:
                 raw = self._call_llm(
@@ -280,7 +312,13 @@ class ZEngineer:
                     cleaned = enforce_keep_terms(cleaned, kept_terms)
                 outputs.append(cleaned)
             except Exception as exc:
+                failed = True
                 outputs.append(self._error_result(str(exc), prompt, error_mode))
+
+        if failed:
+            _FAILED_INPUTS.add(key)
+        else:
+            _FAILED_INPUTS.discard(key)
 
         if batch_mode:
             result = decode_separator(batch_separator).join(outputs)

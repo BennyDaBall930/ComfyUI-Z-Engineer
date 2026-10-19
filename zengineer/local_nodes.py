@@ -6,6 +6,7 @@ GGUF quants, and expose it both as a Z-Image text encoder (CLIP) and as
 an in-process prompt enhancer.
 """
 
+import contextlib
 import importlib
 import json
 import logging
@@ -20,6 +21,7 @@ import comfy.sd
 import comfy.utils
 import folder_paths
 
+from .fp4_dequant import register_comfyui_gguf_fp4
 from .prompt_utils import (
     V6_SYSTEM_PROMPT,
     build_chat_prompt,
@@ -192,6 +194,10 @@ def _resolve_comfyui_gguf():
             loader_mod = importlib.import_module(".loader", name)
             ops_mod = importlib.import_module(".ops", name)
             nodes_mod = importlib.import_module(".nodes", name)
+            try:
+                register_comfyui_gguf_fp4(importlib.import_module(".dequant", name))
+            except Exception as exc:
+                logging.warning("Z-Engineer: could not add FP4 dequant to ComfyUI-GGUF (%s)", exc)
             return (
                 loader_mod.gguf_clip_loader,
                 ops_mod.GGMLOps,
@@ -200,6 +206,74 @@ def _resolve_comfyui_gguf():
         except Exception as exc:
             logging.warning("Z-Engineer: found '%s' but could not use it (%s)", name, exc)
     return None
+
+
+def _quantized_ggml_layers(model):
+    return [
+        module
+        for module in model.modules()
+        if callable(getattr(module, "is_ggml_quantized", None))
+        and callable(getattr(module, "cast_bias_weight", None))
+        and module.is_ggml_quantized()
+    ]
+
+
+@contextlib.contextmanager
+def ggml_weight_cache(clip):
+    """Dequantize each GGUF layer once for the duration of a generation.
+
+    ComfyUI-GGUF dequantizes every weight on every forward pass, which is
+    cheap for a single text-encode but dominates token-by-token generation
+    (hundreds of forwards). Inside this context each quantized layer caches
+    its dequantized weight on first use and reuses it for every later token.
+    Needs VRAM for the dequantized copy (~2 bytes per weight); when there is
+    not enough headroom it leaves the on-the-fly path alone.
+    """
+    cond_model = getattr(clip, "cond_stage_model", None)
+    layers = _quantized_ggml_layers(cond_model) if cond_model is not None else []
+    if not layers:
+        yield False
+        return
+
+    device = clip.patcher.load_device
+    needed = 0
+    for module in layers:
+        shape = getattr(module.weight, "tensor_shape", None) or module.weight.shape
+        needed += 2 * int(torch.Size(shape).numel())
+    if device.type != "cuda" or comfy.model_management.get_free_memory(device) < needed + 1024**3:
+        logging.info(
+            "Z-Engineer: not enough free VRAM to cache %.1f GiB of dequantized weights; using on-the-fly dequant",
+            needed / 1024**3,
+        )
+        yield False
+        return
+
+    for module in layers:
+        original = module.cast_bias_weight
+        cache = {}
+
+        def cached_cast(*args, _original=original, _cache=cache, **kwargs):
+            inp = args[0] if args else kwargs.get("input")
+            key = (
+                kwargs.get("dtype"),
+                kwargs.get("device"),
+                kwargs.get("bias_dtype"),
+                inp.dtype if isinstance(inp, torch.Tensor) else None,
+                inp.device if isinstance(inp, torch.Tensor) else None,
+            )
+            hit = _cache.get(key)
+            if hit is None:
+                hit = _cache[key] = _original(*args, **kwargs)
+            return hit
+
+        module.cast_bias_weight = cached_cast
+    logging.info("Z-Engineer: caching dequantized weights for %s GGUF layers during generation", len(layers))
+    try:
+        yield True
+    finally:
+        for module in layers:
+            module.__dict__.pop("cast_bias_weight", None)
+        comfy.model_management.soft_empty_cache()
 
 
 class ZEngineerCLIPLoader:
@@ -330,7 +404,7 @@ class ZEngineerEnhance:
                 "top_p": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "top_k": ("INT", {"default": 40, "min": 0, "max": 1000}),
                 "min_p": ("FLOAT", {"default": 0.03, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "repetition_penalty": ("FLOAT", {"default": 1.05, "min": 0.0, "max": 5.0, "step": 0.01}),
+                "repetition_penalty": ("FLOAT", {"default": 1.05, "min": 0.01, "max": 5.0, "step": 0.01}),
                 "max_tokens": ("INT", {"default": 320, "min": 32, "max": 4096}),
                 "enforce_seed_terms": ("BOOLEAN", {"default": True, "tooltip": "Deterministically re-append seed phrases (counts, colors, quoted text) the model dropped."}),
                 "strip_reasoning": ("BOOLEAN", {"default": True}),
@@ -393,28 +467,29 @@ class ZEngineerEnhance:
         kept_terms = parse_keep_terms(keep_terms)
         prompts = split_batch(input_prompt, bool(batch_mode), str(batch_separator or ""))
         outputs = []
-        for idx, seed_prompt in enumerate(prompts):
-            chat_text = build_chat_prompt(system_prompt, build_user_prompt(seed_prompt, kept_terms))
-            tokens = clip.tokenize(chat_text, llama_template="{}")
-            do_sample = float(temperature) > 0.0
-            token_ids = clip.generate(
-                tokens,
-                do_sample=do_sample,
-                max_length=int(max_tokens),
-                temperature=max(float(temperature), 1e-3),
-                top_k=int(top_k),
-                top_p=float(top_p),
-                min_p=float(min_p),
-                repetition_penalty=float(repetition_penalty),
-                seed=(int(seed) + idx) & MAX_SEED,
-            )
-            raw_text = clip.decode(token_ids)
-            cleaned = sanitize_prompt(raw_text, bool(strip_reasoning), bool(sanitize_output))
-            if enforce_seed_terms:
-                cleaned = preserve_seed_constraints(seed_prompt, cleaned)
-            if kept_terms:
-                cleaned = enforce_keep_terms(cleaned, kept_terms)
-            outputs.append(cleaned)
+        with ggml_weight_cache(clip):
+            for idx, seed_prompt in enumerate(prompts):
+                chat_text = build_chat_prompt(system_prompt, build_user_prompt(seed_prompt, kept_terms))
+                tokens = clip.tokenize(chat_text, llama_template="{}")
+                do_sample = float(temperature) > 0.0
+                token_ids = clip.generate(
+                    tokens,
+                    do_sample=do_sample,
+                    max_length=int(max_tokens),
+                    temperature=max(float(temperature), 1e-3),
+                    top_k=int(top_k),
+                    top_p=float(top_p),
+                    min_p=float(min_p),
+                    repetition_penalty=float(repetition_penalty),
+                    seed=(int(seed) + idx) & MAX_SEED,
+                )
+                raw_text = clip.decode(token_ids)
+                cleaned = sanitize_prompt(raw_text, bool(strip_reasoning), bool(sanitize_output))
+                if enforce_seed_terms:
+                    cleaned = preserve_seed_constraints(seed_prompt, cleaned)
+                if kept_terms:
+                    cleaned = enforce_keep_terms(cleaned, kept_terms)
+                outputs.append(cleaned)
 
         if batch_mode:
             result = decode_separator(batch_separator).join(outputs)

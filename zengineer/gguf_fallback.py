@@ -7,6 +7,7 @@ custom-node dependencies; ComfyUI-GGUF remains the recommended path.
 """
 
 import logging
+import os
 
 import numpy as np
 import torch
@@ -50,15 +51,33 @@ def _read_arch(reader, gguf):
 
 def read_gguf_architecture(path):
     """Return general.architecture of a GGUF file, or None if it cannot be
-    determined (e.g. the gguf package is not installed)."""
+    determined (e.g. the gguf package is not installed). Raises a clear error
+    when the installed gguf package predates a tensor type in the file
+    (NVFP4 needs gguf>=0.19.0) instead of letting the loader fail later."""
     try:
         import gguf
     except ImportError:
         return None
     try:
-        return _read_arch(gguf.GGUFReader(path), gguf)
+        reader = gguf.GGUFReader(path)
+    except ValueError as exc:
+        if "GGMLQuantizationType" in str(exc):
+            from .fp4_dequant import gguf_version
+
+            raise RuntimeError(
+                f"The installed gguf package ({gguf_version()}) cannot read '{os.path.basename(path)}': {exc}. "
+                "NVFP4 GGUFs need gguf 0.19.0 or newer. In ComfyUI's Python run: "
+                'pip install -U "gguf>=0.19.0" and restart ComfyUI.'
+            ) from exc
+        return None
     except Exception:
         return None
+    if any(t.name.endswith(".scale") for t in reader.tensors):
+        raise RuntimeError(
+            f"'{os.path.basename(path)}' is a two-level NVFP4 GGUF (per-tensor .scale tensors), which ComfyUI "
+            "loaders cannot apply; use a single-level NVFP4 or another quant."
+        )
+    return _read_arch(reader, gguf)
 
 
 def load_gguf_state_dict_dequant(path, dtype=torch.float16):
@@ -84,7 +103,7 @@ def load_gguf_state_dict_dequant(path, dtype=torch.float16):
         shape = tuple(reversed(tuple(int(dim) for dim in tensor.shape)))
         tensor_type = tensor.tensor_type
         if tensor_type in (gguf.GGMLQuantizationType.F32, gguf.GGMLQuantizationType.F16):
-            array = np.asarray(tensor.data)
+            array = np.array(tensor.data, copy=True)
         else:
             try:
                 array = gguf.quants.dequantize(tensor.data, tensor_type)
@@ -93,7 +112,7 @@ def load_gguf_state_dict_dequant(path, dtype=torch.float16):
                     f"Cannot dequantize tensor '{tensor.name}' with type {tensor_type!r}: {exc}. "
                     "Install ComfyUI-GGUF or use a different quant."
                 ) from exc
-        torch_tensor = torch.from_numpy(np.array(array, copy=True)).reshape(shape)
+        torch_tensor = torch.from_numpy(np.ascontiguousarray(array)).reshape(shape)
         if torch_tensor.ndim <= 1:
             torch_tensor = torch_tensor.to(torch.float32)
         else:

@@ -11,7 +11,7 @@ Also runs the fast 1.2B [LFM2.5-Z-Image-Engineer](https://huggingface.co/BennyDa
 | Node | What it does |
 | --- | --- |
 | **Z-Engineer CLIP Loader (Safetensors / Shards)** | Loads a single `.safetensors` file *or a sharded HF folder* (`model-00001-of-00003.safetensors` + index) as a Z-Image text encoder. This is how you load the 3-piece Z-Image-Engineer-V6 release directly. |
-| **Z-Engineer CLIP Loader (GGUF)** | Loads a llama.cpp-style Qwen3 GGUF (Q3_K_M ... F16) as a Z-Image text encoder. Uses [ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) for on-the-fly dequant when installed; otherwise falls back to FP16 dequant at load time. |
+| **Z-Engineer CLIP Loader (GGUF)** | Loads a llama.cpp-style Qwen3 GGUF (Q3_K_M ... F16, MXFP4, NVFP4) as a Z-Image text encoder. Uses [ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) for on-the-fly dequant when installed; otherwise falls back to FP16 dequant at load time. |
 | **Z-Engineer Prompt Enhancer (Local)** | Takes the loaded CLIP and generates the polished V6 prompt in-process (ComfyUI's own model management — no server). The enhanced prompt is previewed on the node and returned as a STRING. |
 | **Z-Engineer LFM2.5 Enhancer Loader (GGUF / Safetensors)** | Loads [LFM2.5-1.2B-Z-Image-Engineer](https://huggingface.co/BennyDaBall/LFM2.5-1.2B-Z-Image-Engineer-V4) (any GGUF quant, or the HF `safetensors/` folder) as a standalone prompt-writer LLM. Runs on plain torch/transformers — CUDA, ROCm, MPS or CPU. **Not** a CLIP. |
 | **Z-Engineer Prompt Enhancer (LFM2.5 Local)** | Same enhancer controls/preview as the Local node, but driven by the LFM2.5 model (~3x faster than Qwen3-4B). Wire its STRING output into CLIP Text Encode. |
@@ -61,6 +61,8 @@ ComfyUI/models/text_encoders/Z-Image-Engineer-V6-Q4_K_M.gguf
 
 Download any quant from [BennyDaBall/Z-Image-Engineer-V6-GGUF](https://huggingface.co/BennyDaBall/Z-Image-Engineer-V6-GGUF) (Q4_K_M is a good default; F16 for maximum fidelity). Installing [ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) is strongly recommended — the quant then stays quantized in VRAM.
 
+**NVFP4 / MXFP4:** the `NVFP4` quant (built for RTX 50 / Blackwell) needs the `gguf` Python package **0.19.0 or newer** (installed automatically from this node's requirements; manual: `pip install -U "gguf>=0.19.0"` in ComfyUI's Python, then restart). With an older `gguf` the loader stops with a clear message instead of a cryptic error. Z-Engineer also adds a fast GPU dequant for NVFP4 and MXFP4 to ComfyUI-GGUF, which otherwise falls back to slow numpy for these types (this speeds up the stock `CLIPLoaderGGUF` too).
+
 ## Usage
 
 ### As text encoder + prompt enhancer (one model, both jobs)
@@ -106,7 +108,7 @@ The GGUF is dequantized at load (~2.5 GB in fp16) and runs through torch + trans
 
 ### Trigger words / keep terms
 
-Put LoRA trigger words (or any phrase that must survive verbatim) into the optional `keep_terms` input, separated by commas: `m4rty style, neon glow`. The model is instructed to weave them in unchanged, and any it still drops are deterministically re-appended to the final prompt — exact casing preserved. Available on both the Local and API enhancer nodes.
+Put LoRA trigger words (or any phrase that must survive verbatim) into the optional `keep_terms` input, separated by commas: `m4rty style, neon glow`. The model is instructed to weave them in unchanged, and any it still drops are deterministically re-appended to the final prompt — exact casing preserved. Available on the Local, LFM2.5 and API enhancer nodes.
 
 ### Resizable text boxes
 
@@ -118,7 +120,8 @@ Enable `batch_mode` to process several seed prompts in one call (split by `batch
 
 ## VRAM notes
 
-- GGUF Q4_K_M with ComfyUI-GGUF: ~3-4 GB during generation.
+- GGUF Q4_K_M with ComfyUI-GGUF: ~3-4 GB for text encoding.
+- Prompt enhancing with a GGUF quant: the enhancer dequantizes the weights once per run (~8 GB for the 4B model) so every quant generates at about the same speed (~33 tok/s on an RTX 5090, vs 5-14 tok/s when dequantizing per token). The copy is freed when the run ends, and it is skipped automatically when there is not enough free VRAM.
 - Sharded/single safetensors (FP16): ~9 GB during generation.
 - Without ComfyUI-GGUF, GGUFs are dequantized to FP16 at load (full FP16 footprint).
 - Loading never spikes VRAM: weights stay on the offload device until first use, and the model participates in ComfyUI's normal model management (it unloads like any other model).
@@ -126,7 +129,7 @@ Enable `batch_mode` to process several seed prompts in one call (split by `batch
 ## Requirements
 
 - ComfyUI new enough to ship native Z-Image support (`comfy/text_encoders/z_image.py`, v0.3.75+)
-- `requests` (API node), `gguf` (GGUF fallback + LFM2.5 path)
+- `requests` (API node), `gguf>=0.19.0` (NVFP4 support, GGUF fallback + LFM2.5 path)
 - `transformers>=4.54` for the LFM2.5 nodes (already required by current ComfyUI; upgrade if yours is older)
 - Optional but recommended: [ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF)
 
