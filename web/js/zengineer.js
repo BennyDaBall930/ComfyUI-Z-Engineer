@@ -30,7 +30,8 @@ function makeBoxResizable(node, w) {
 	// Pin this widget to its user-chosen height during layout. The layout
 	// engine treats minHeight === maxHeight as a fixed slot and gives the
 	// remaining node space to the unpinned boxes.
-	const origLayoutSize = w.computeLayoutSize?.bind(w);
+	const origFn = w.computeLayoutSize;
+	const origLayoutSize = origFn ? (n) => origFn.call(w, n) : undefined;
 	w.computeLayoutSize = function (n) {
 		const base = origLayoutSize
 			? origLayoutSize(n)

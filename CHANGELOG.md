@@ -1,5 +1,9 @@
 # Changelog
 
+## v2.3.2 (2026-10-20)
+
+- 2.3.2: packaging only. Dev test harness excluded from the registry package; no behavior change.
+
 ## v2.3.1 (2026-10-19)
 
 - Registry-safe loading, no behavior change: nothing runs at import beyond registering the nodes. The FP4 dequant kernels are registered once, by the Z-Engineer GGUF loader when it runs; ComfyUI-GGUF is located through ComfyUI's list of loaded node packs; no prompt hooks; specific exception handling with warnings instead of silent catch-alls.
