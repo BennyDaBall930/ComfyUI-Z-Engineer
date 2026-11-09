@@ -136,3 +136,7 @@ Enable `batch_mode` to process several seed prompts in one call (split by `batch
 ## License
 
 MIT
+
+**Follow me on X [@BennyDaBall_OG](https://x.com/BennyDaBall_OG) !**
+
+**Want to support my work? Buy me a coffee on [Ko-fi](https://ko-fi.com/bennydaball) !**
