@@ -74,11 +74,6 @@ def read_gguf_architecture(path):
     except (OSError, KeyError, IndexError) as exc:
         logging.warning("Z-Engineer: could not read GGUF header of '%s': %s", os.path.basename(path), exc)
         return None
-    if any(t.name.endswith(".scale") for t in reader.tensors):
-        raise RuntimeError(
-            f"'{os.path.basename(path)}' is a two-level NVFP4 GGUF (per-tensor .scale tensors), which ComfyUI "
-            "loaders cannot apply; use a single-level NVFP4 or another quant."
-        )
     return _read_arch(reader, gguf)
 
 
@@ -99,9 +94,19 @@ def load_gguf_state_dict_dequant(path, dtype=torch.float16):
             f"(expected one of {sorted(SUPPORTED_ARCHS)}). Install ComfyUI-GGUF for broader support."
         )
 
+    # Two-level NVFP4: `<name>.scale` (one F32 value) multiplies `<name>.weight` after dequant.
+    names = {tensor.name for tensor in reader.tensors}
+    scales = {
+        tensor.name[: -len("scale")] + "weight": float(np.asarray(tensor.data, dtype=np.float32).reshape(-1)[0])
+        for tensor in reader.tensors
+        if tensor.name.endswith(".scale") and tensor.name[: -len("scale")] + "weight" in names
+    }
+
     state_dict = {}
     qtype_counts = {}
     for tensor in reader.tensors:
+        if tensor.name.endswith(".scale") and tensor.name[: -len("scale")] + "weight" in scales:
+            continue
         shape = tuple(reversed(tuple(int(dim) for dim in tensor.shape)))
         tensor_type = tensor.tensor_type
         if tensor_type in (gguf.GGMLQuantizationType.F32, gguf.GGMLQuantizationType.F16):
@@ -114,6 +119,8 @@ def load_gguf_state_dict_dequant(path, dtype=torch.float16):
                     f"Cannot dequantize tensor '{tensor.name}' with type {tensor_type!r}: {exc}. "
                     "Install ComfyUI-GGUF or use a different quant."
                 ) from exc
+        if tensor.name in scales:
+            array = np.asarray(array, dtype=np.float32) * np.float32(scales[tensor.name])
         torch_tensor = torch.from_numpy(np.ascontiguousarray(array)).reshape(shape)
         if torch_tensor.ndim <= 1:
             torch_tensor = torch_tensor.to(torch.float32)
@@ -125,8 +132,9 @@ def load_gguf_state_dict_dequant(path, dtype=torch.float16):
         qtype_counts[type_name] = qtype_counts.get(type_name, 0) + 1
 
     logging.info(
-        "Z-Engineer GGUF fallback: dequantized %s tensors (%s)",
+        "Z-Engineer GGUF fallback: dequantized %s tensors (%s)%s",
         len(state_dict),
         ", ".join(f"{k} ({v})" for k, v in qtype_counts.items()),
+        f", applied {len(scales)} per-tensor scales" if scales else "",
     )
     return state_dict

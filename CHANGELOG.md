@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.3.3 (2026-11-11)
+
+- Two-level NVFP4 GGUFs (per-tensor `.scale` tensors, the layout llama.cpp and LM Studio read) now load in the Z-Engineer GGUF loader instead of being refused. With ComfyUI-GGUF the scale is applied at dequant time, so VRAM use stays low and LoRA patches still land on the true weight; the FP16 fallback applies it at load. Single-level files load exactly as before.
+- Prompt enhancer: fixed a crash with GGUF text encoders on current ComfyUI when `top_p` is below 1 ("some elements of the input tensor and the written-to tensor refer to a single memory location"). Same output as before on ComfyUI versions that did not crash.
+- The stock `CLIPLoaderGGUF` cannot apply per-tensor scales. Load two-level NVFP4 files with the Z-Engineer CLIP Loader (GGUF).
+
 ## v2.3.2 (2026-10-20)
 
 - 2.3.2: packaging only. Dev test harness excluded from the registry package; no behavior change.

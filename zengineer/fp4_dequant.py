@@ -133,6 +133,82 @@ def register_comfyui_gguf_fp4(dequant_module):
     return added
 
 
+class ScaledQType:
+    """A GGML quantization type plus a per-tensor scale.
+
+    Two-level NVFP4 GGUFs (the layout llama.cpp reads) store one extra F32
+    value per weight matrix in a companion ``<name>.scale`` tensor; the real
+    weight is ``dequant(blocks) * scale``. ComfyUI-GGUF dequantizes by looking
+    up ``tensor.tensor_type`` in its kernel table, so the scale rides along as
+    the tensor's type: one instance per distinct scale, registered with a
+    kernel that decodes the base type and multiplies. The scale is therefore
+    applied inside the dequant, before any LoRA patch is added.
+    """
+
+    __slots__ = ("base", "scale", "name", "value")
+
+    def __init__(self, base, scale):
+        self.base = base
+        self.scale = float(scale)
+        self.name = f"{getattr(base, 'name', repr(base))}_SCALED"
+        self.value = getattr(base, "value", None)
+
+    def __repr__(self):
+        return f"<ScaledQType {self.name} x{self.scale:.6g}>"
+
+
+_SCALED_QTYPES = {}
+
+
+def _scaled_kernel(base_fn, scale):
+    def kernel(blocks, block_size, type_size, dtype=None):
+        # fp32 keeps the product exact enough for a single rounding to the target dtype
+        out = base_fn(blocks, block_size, type_size, torch.float32) * scale
+        return out if dtype is None else out.to(dtype)
+
+    return kernel
+
+
+def scaled_qtype(dequant_module, base, scale):
+    """Return the ScaledQType for (base, scale), registering its kernel and
+    block size with ComfyUI-GGUF / gguf on first use."""
+    import gguf
+
+    table = getattr(dequant_module, "dequantize_functions", None)
+    if not isinstance(table, dict) or base not in table:
+        raise RuntimeError(
+            f"ComfyUI-GGUF has no torch kernel for {getattr(base, 'name', base)!r}; cannot apply a per-tensor scale"
+        )
+    key = (base, float(scale))
+    qtype = _SCALED_QTYPES.get(key)
+    if qtype is None:
+        qtype = _SCALED_QTYPES[key] = ScaledQType(base, scale)
+    if qtype not in table:
+        table[qtype] = _scaled_kernel(table[base], qtype.scale)
+    if qtype not in gguf.GGML_QUANT_SIZES:
+        gguf.GGML_QUANT_SIZES[qtype] = gguf.GGML_QUANT_SIZES[base]
+    return qtype
+
+
+def apply_tensor_scales(state_dict, dequant_module):
+    """Fold every ``<name>.scale`` companion tensor of a ComfyUI-GGUF state
+    dict into its ``<name>.weight`` (see ScaledQType) and drop the scale keys.
+    Returns the number of weights that got a scale. A no-op for single-level
+    files."""
+    scale_keys = [key for key in state_dict if key.endswith(".scale")]
+    applied = 0
+    for key in scale_keys:
+        weight_key = key[: -len("scale")] + "weight"
+        weight = state_dict.get(weight_key)
+        if weight is None or getattr(weight, "tensor_type", None) is None:
+            continue
+        scale = float(torch.as_tensor(state_dict[key]).to(torch.float32).reshape(-1)[0])
+        weight.tensor_type = scaled_qtype(dequant_module, weight.tensor_type, scale)
+        del state_dict[key]
+        applied += 1
+    return applied
+
+
 def gguf_version():
     try:
         from importlib.metadata import version

@@ -21,7 +21,7 @@ import comfy.sd
 import comfy.utils
 import folder_paths
 
-from .fp4_dequant import ensure_fp4_kernels
+from .fp4_dequant import apply_tensor_scales, ensure_fp4_kernels
 from .prompt_utils import (
     V6_SYSTEM_PROMPT,
     build_chat_prompt,
@@ -150,6 +150,7 @@ def _load_clip_from_state_dict(state_dict, model_options):
 
 
 _COMFYUI_GGUF = None
+_COMFYUI_GGUF_DEQUANT = None
 
 
 def _comfyui_gguf_module_names():
@@ -176,7 +177,7 @@ def _resolve_comfyui_gguf():
     """Return (gguf_clip_loader, GGMLOps, GGUFModelPatcher) from the installed
     ComfyUI-GGUF pack, or None when it is not installed. Also makes sure the
     Z-Engineer FP4 (NVFP4/MXFP4) dequant kernels are available to it."""
-    global _COMFYUI_GGUF
+    global _COMFYUI_GGUF, _COMFYUI_GGUF_DEQUANT
     if _COMFYUI_GGUF is not None:
         return _COMFYUI_GGUF
     for name in _comfyui_gguf_module_names():
@@ -191,6 +192,7 @@ def _resolve_comfyui_gguf():
             continue
         ensure_fp4_kernels(dequant_mod)
         _COMFYUI_GGUF = resolved
+        _COMFYUI_GGUF_DEQUANT = dequant_mod
         return resolved
     return None
 
@@ -261,6 +263,38 @@ def ggml_weight_cache(clip):
         for module in layers:
             module.__dict__.pop("cast_bias_weight", None)
         comfy.model_management.soft_empty_cache()
+
+
+@contextlib.contextmanager
+def plain_logits(clip):
+    """Hand ComfyUI's sampler plain tensors during generation.
+
+    With a GGUF text encoder the tied embedding doubles as the output head,
+    so ComfyUI-GGUF's tensor class can leak into the logits. Its ``clone()``
+    returns the same object, which makes the sampler's in-place top-p step
+    fail ("refer to a single memory location"). Only the class is stripped;
+    the values are untouched.
+    """
+    cond_model = getattr(clip, "cond_stage_model", None)
+    patched = []
+    for module in cond_model.modules() if cond_model is not None else []:
+        logits_fn = getattr(module, "logits", None)
+        if not callable(logits_fn) or not callable(getattr(module, "sample_token", None)):
+            continue
+
+        def plain(*args, _fn=logits_fn, **kwargs):
+            out = _fn(*args, **kwargs)
+            if isinstance(out, torch.Tensor) and type(out) is not torch.Tensor:
+                out = out.as_subclass(torch.Tensor)
+            return out
+
+        module.logits = plain
+        patched.append(module)
+    try:
+        yield
+    finally:
+        for module in patched:
+            module.__dict__.pop("logits", None)
 
 
 class ZEngineerCLIPLoader:
@@ -345,6 +379,9 @@ class ZEngineerCLIPLoaderGGUF:
             gguf_clip_loader, GGMLOps, GGUFModelPatcher = resolved
             logging.info("Z-Engineer: loading GGUF via ComfyUI-GGUF (on-the-fly dequant)")
             state_dict = gguf_clip_loader(path)
+            scaled = apply_tensor_scales(state_dict, _COMFYUI_GGUF_DEQUANT)
+            if scaled:
+                logging.info("Z-Engineer: two-level NVFP4 GGUF, applying %s per-tensor scales at dequant", scaled)
             model_options["custom_operations"] = GGMLOps
             model_options.setdefault("initial_device", comfy.model_management.text_encoder_offload_device())
             clip = _load_clip_from_state_dict(state_dict, model_options)
@@ -454,7 +491,7 @@ class ZEngineerEnhance:
         kept_terms = parse_keep_terms(keep_terms)
         prompts = split_batch(input_prompt, bool(batch_mode), str(batch_separator or ""))
         outputs = []
-        with ggml_weight_cache(clip):
+        with ggml_weight_cache(clip), plain_logits(clip):
             for idx, seed_prompt in enumerate(prompts):
                 chat_text = build_chat_prompt(system_prompt, build_user_prompt(seed_prompt, kept_terms))
                 tokens = clip.tokenize(chat_text, llama_template="{}")
